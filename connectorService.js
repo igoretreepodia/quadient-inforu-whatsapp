@@ -45,25 +45,6 @@ async function sendSingle(config, msg, callbackUrl) {
 }
 
 /**
- * Fetches a template SID by name via Twilio Content API.
- * Returns null if not found.
- */
-async function fetchTemplateSid(config, templateName) {
-  const url = `https://content.twilio.com/v2/Content?Channel=whatsapp&ContentName=${encodeURIComponent(templateName)}`;
-  const auth = Buffer.from(`${config.apiSid}:${config.apiSecret}`).toString('base64');
-
-  try {
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Basic ${auth}` }
-    });
-    const contents = resp.data.contents || [];
-    return contents.length > 0 ? contents[0].sid : null;
-  } catch (err) {
-    throw new Error(`Failed to fetch SID for template "${templateName}": ${err.message}`);
-  }
-}
-
-/**
  * Sends a free-form (“Body”) WhatsApp message via Twilio.
  */
 async function sendFreeformMessage(config, msg, callbackUrl) {
@@ -140,40 +121,19 @@ async function sendTemplateMessage(config, msg, callbackUrl) {
   }
 
   const templatePayload = parsed.template;
-  if (!templatePayload || !templatePayload.name) {
-    console.log('Template name is missing');
+  if (!templatePayload || !templatePayload.templateSid) {
+    console.log('The template must contain templateSid');
     return {
       batchId: msg.batchId,
       messageId: msg.messageId,
       successfullySent: false,
       isRetryable: false,
-      errorMessage: 'Template name is missing'
+      errorMessage: 'The template must contain templateSid'
     };
   }
 
-  // 1) Fetch SID
-  let templateSid;
-  try {
-    templateSid = await fetchTemplateSid(config, templatePayload.name);
-  } catch (err) {
-    return {
-      batchId: msg.batchId,
-      messageId: msg.messageId,
-      successfullySent: false,
-      isRetryable: false,
-      errorMessage: err.message
-    };
-  }
-
-  if (!templateSid) {
-    return {
-      batchId: msg.batchId,
-      messageId: msg.messageId,
-      successfullySent: false,
-      isRetryable: false,
-      errorMessage: `Template "${templatePayload.name}" not found`
-    };
-  }
+  // 1) Get template SID
+  let templateSid = templatePayload.templateSid;
 
   // 2) Build ContentVariables only if components/body/parameters exist
   let variablesMap = {};
@@ -236,35 +196,6 @@ async function sendTemplateMessage(config, msg, callbackUrl) {
       isRetryable: isInsuff,
       errorMessage: err.message
     };
-  }
-}
-
-async function sendSingle_old(config, msg, callbackUrl) {
-  const url = `${config.baseUrl}/2010-04-01/Accounts/${config.accountSid}/Messages.json`;
-  const auth = Buffer.from(`${config.apiSid}:${config.apiSecret}`).toString('base64');
-  const form = {
-    Body: msg.message,
-    To: `whatsapp:${msg.recipient}`,
-    From: `whatsapp:${msg.sender}`,
-    StatusCallback: `${callbackUrl}/${msg.batchId}/${msg.messageId}`
-  };
-
-  try {
-    const resp = await axios.post(url, querystring.stringify(form), {
-      headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
-    });
-    if (resp.status === 201) {
-      const data = resp.data;
-      const ok = ['queued','accepted'].includes(data.status);
-      return { batchId: msg.batchId, messageId: msg.messageId, successfullySent: ok, isRetryable: false, errorMessage: ok ? null : data.message };
-    }
-    return { batchId: msg.batchId, messageId: msg.messageId, successfullySent: false, isRetryable: true, errorMessage: resp.statusText };
-  } catch (err) {
-    const isInsuff = err.response && err.response.data.code === 30002;
-    return { batchId: msg.batchId, messageId: msg.messageId, successfullySent: false, isRetryable: isInsuff, errorMessage: err.message };
   }
 }
 
