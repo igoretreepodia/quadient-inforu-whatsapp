@@ -1,5 +1,4 @@
 const axios = require('axios');
-const querystring = require('querystring');
 
 class SendingThrottler {
   constructor() {
@@ -26,86 +25,45 @@ async function sendMessages(config, messages, callbackUrl) {
 }
 
 /**
- * Inspects msg.message. If it’s JSON with a "template" field, delegate to sendTemplateMessage.
- * Otherwise, delegate to sendFreeformMessage.
+ * Inspects msg.message. If it's JSON with a "template" field, delegate to sendTemplateMessage.
+ * Otherwise, return error since Inforu requires template messages for first contact.
  */
 async function sendSingle(config, msg, callbackUrl) {
   let parsed;
   try {
     parsed = JSON.parse(msg.message);
   } catch (_) {
-    // Not JSON → free-form
-    return sendFreeformMessage(config, msg, callbackUrl);
+    // Not JSON → error for Inforu (must be template for first contact)
+    return {
+      batchId: msg.batchId,
+      messageId: msg.messageId,
+      successfullySent: false,
+      isRetryable: false,
+      errorMessage: 'Inforu requires template messages for initial contact. Message must be JSON with template field.'
+    };
   }
 
   if (parsed && parsed.template) {
     return sendTemplateMessage(config, msg, callbackUrl);
   }
-  return sendFreeformMessage(config, msg, callbackUrl);
-}
 
-/**
- * Sends a free-form (“Body”) WhatsApp message via Twilio.
- */
-async function sendFreeformMessage(config, msg, callbackUrl) {
-  console.log(`Sending freeform message: ${msg.message}`);
-  const url = `${config.baseUrl}/2010-04-01/Accounts/${config.accountSid}/Messages.json`;
-  const auth = Buffer.from(`${config.apiSid}:${config.apiSecret}`).toString('base64');
-
-  const form = {
-    Body: msg.message,
-    To: `whatsapp:${msg.recipient}`,
-    From: `whatsapp:${msg.sender}`,
-    StatusCallback: `${callbackUrl}/${msg.batchId}/${msg.messageId}`
+  return {
+    batchId: msg.batchId,
+    messageId: msg.messageId,
+    successfullySent: false,
+    isRetryable: false,
+    errorMessage: 'Message must contain template field for Inforu WhatsApp'
   };
-
-  try {
-    const resp = await axios.post(url, querystring.stringify(form), {
-      headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
-    });
-
-    if (resp.status === 201) {
-      const data = resp.data;
-      const ok = ['queued', 'accepted'].includes(data.status);
-      return {
-        batchId: msg.batchId,
-        messageId: msg.messageId,
-        successfullySent: ok,
-        isRetryable: false,
-        errorMessage: ok ? null : data.message
-      };
-    }
-
-    return {
-      batchId: msg.batchId,
-      messageId: msg.messageId,
-      successfullySent: false,
-      isRetryable: true,
-      errorMessage: resp.statusText
-    };
-  } catch (err) {
-    const isInsuff = err.response && err.response.data && err.response.data.code === 30002;
-    return {
-      batchId: msg.batchId,
-      messageId: msg.messageId,
-      successfullySent: false,
-      isRetryable: isInsuff,
-      errorMessage: err.message
-    };
-  }
 }
 
 /**
- * Sends a template-based WhatsApp message via Twilio.
- * Expects msg.message to be a JSON string containing a top-level "template" object.
+ * Sends a template-based WhatsApp message via Inforu API.
+ * Expects msg.message to be a JSON string containing a "template" object with templateId.
  */
 async function sendTemplateMessage(config, msg, callbackUrl) {
-  console.log(`Sending template message: ${msg.message}`);
-  const url = `${config.baseUrl}/2010-04-01/Accounts/${config.accountSid}/Messages.json`;
-  const auth = Buffer.from(`${config.apiSid}:${config.apiSecret}`).toString('base64');
+  console.log(`Sending Inforu template message: ${msg.message}`);
+  const url = 'https://capi.inforu.co.il/api/v2/WhatsApp/SendWhatsApp';
+  const auth = Buffer.from(`${config.username}:${config.token}`).toString('base64');
 
   let parsed;
   try {
@@ -121,62 +79,76 @@ async function sendTemplateMessage(config, msg, callbackUrl) {
   }
 
   const templatePayload = parsed.template;
-  if (!templatePayload || !templatePayload.templateSid) {
-    console.log('The template must contain templateSid');
+  if (!templatePayload || !templatePayload.templateId) {
     return {
       batchId: msg.batchId,
       messageId: msg.messageId,
       successfullySent: false,
       isRetryable: false,
-      errorMessage: 'The template must contain templateSid'
+      errorMessage: 'Template must contain templateId'
     };
   }
 
-  // 1) Get template SID
-  let templateSid = templatePayload.templateSid;
-
-  // 2) Build ContentVariables only if components/body/parameters exist
-  let variablesMap = {};
+  // Build TemplateParameters array from components
+  const templateParameters = [];
   if (Array.isArray(templatePayload.components)) {
     for (const comp of templatePayload.components) {
       if (comp.type === 'body' && Array.isArray(comp.parameters)) {
         comp.parameters.forEach((paramObj, idx) => {
           if (paramObj.type === 'text') {
-            variablesMap[String(idx + 1)] = paramObj.text || '';
+            templateParameters.push({
+              Name: `[#${idx + 1}#]`, // Inforu uses [#1#], [#2#], etc.
+              Type: paramObj.valueType || 'Text', // Text, Contact, or Custom
+              Value: paramObj.text || ''
+            });
           }
         });
       }
     }
   }
 
-  // 3) Construct form. Omit ContentVariables if empty.
-  const form = {
-    To: `whatsapp:${msg.recipient}`,
-    From: `whatsapp:${msg.sender}`,
-    StatusCallback: `${callbackUrl}/${msg.batchId}/${msg.messageId}`,
-    ContentSid: templateSid
+  // Build recipient object
+  const recipient = {
+    Phone: msg.recipient.replace(/^whatsapp:/, ''), // Remove whatsapp: prefix if present
+    FirstName: templatePayload.recipientData?.firstName || '',
+    LastName: templatePayload.recipientData?.lastName || ''
   };
-  if (Object.keys(variablesMap).length > 0) {
-    form.ContentVariables = JSON.stringify(variablesMap);
+
+  // Add any custom fields from recipientData
+  if (templatePayload.recipientData) {
+    Object.keys(templatePayload.recipientData).forEach(key => {
+      if (!['firstName', 'lastName'].includes(key)) {
+        recipient[key] = templatePayload.recipientData[key];
+      }
+    });
   }
 
+  const requestBody = {
+    Data: {
+      TemplateId: templatePayload.templateId,
+      TemplateParameters: templateParameters,
+      Recipients: [recipient],
+      DeliveryNotificationUrl: `${callbackUrl}/${msg.batchId}/${msg.messageId}`,
+      CustomerMessageId: `${msg.batchId}_${msg.messageId}`
+    }
+  };
+
   try {
-    const resp = await axios.post(url, querystring.stringify(form), {
+    const resp = await axios.post(url, requestBody, {
       headers: {
         Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Content-Type': 'application/json'
       }
     });
 
-    if (resp.status === 201) {
-      const data = resp.data;
-      const ok = ['queued', 'accepted'].includes(data.status);
+    if (resp.status === 200 && resp.data.StatusId === 1) {
       return {
         batchId: msg.batchId,
         messageId: msg.messageId,
-        successfullySent: ok,
+        successfullySent: true,
         isRetryable: false,
-        errorMessage: ok ? null : data.message
+        errorMessage: null,
+        inforuRequestId: resp.data.RequestId
       };
     }
 
@@ -184,16 +156,16 @@ async function sendTemplateMessage(config, msg, callbackUrl) {
       batchId: msg.batchId,
       messageId: msg.messageId,
       successfullySent: false,
-      isRetryable: true,
-      errorMessage: resp.statusText
+      isRetryable: resp.data.StatusId !== 1,
+      errorMessage: resp.data.DetailedDescription || resp.data.StatusDescription
     };
   } catch (err) {
-    const isInsuff = err.response && err.response.data && err.response.data.code === 30002;
+    const isRetryable = err.response && err.response.status >= 500;
     return {
       batchId: msg.batchId,
       messageId: msg.messageId,
       successfullySent: false,
-      isRetryable: isInsuff,
+      isRetryable: isRetryable,
       errorMessage: err.message
     };
   }

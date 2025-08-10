@@ -18,18 +18,16 @@ async function getAuthCredentials() {
   return getCachedEnv('CREDENTIALS');
 }
 
-async function getTwilioConfig() {
-  const baseUrl = await getCachedEnv('TWILIO_BASE_URL');
-  const accountSid = await getCachedEnv('TWILIO_ACCOUNT_SID');
-  const apiSid = await getCachedEnv('TWILIO_API_SID');
-  const apiSecret = await getCachedEnv('TWILIO_API_SECRET');
-  const segmentsStr = await getCachedEnv('TWILIO_SEGMENTS_PER_SECOND', true);
+async function getInforuConfig() {
+  const username = await getCachedEnv('INFORU_USERNAME');
+  const token = await getCachedEnv('INFORU_TOKEN');
+  const segmentsStr = await getCachedEnv('INFORU_SEGMENTS_PER_SECOND', true);
   const segmentsPerSecond = segmentsStr ? parseInt(segmentsStr, 10) : 0;
 
-  if (!baseUrl || !accountSid || !apiSid || !apiSecret) {
+  if (!username || !token) {
     return null;
   }
-  return { baseUrl, accountSid, apiSid, apiSecret, segmentsPerSecond };
+  return { username, token, segmentsPerSecond };
 }
 
-module.exports = { getAuthCredentials, getTwilioConfig };
+module.exports = { getAuthCredentials, getInforuConfig };
