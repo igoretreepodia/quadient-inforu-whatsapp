@@ -133,6 +133,8 @@ async function sendTemplateMessage(config, msg, callbackUrl) {
     }
   };
 
+  console.log(`Sending Inforu request body: ${requestBody}`);
+
   try {
     const resp = await axios.post(url, requestBody, {
       headers: {
