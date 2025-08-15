@@ -1,3 +1,5 @@
+import querystring from "querystring";
+
 function translateRequest(requestToParse, universalUrl) {
   const { uri, body } = requestToParse;
   const response = {};
@@ -19,15 +21,34 @@ function translateRequest(requestToParse, universalUrl) {
     const messageId = Number(segments[1]);
 
     let deliveryData;
-    try {
-      deliveryData = Array.isArray(body) ? body : JSON.parse(body);
-      if (!Array.isArray(deliveryData)) {
-        deliveryData = [deliveryData];
+
+    if (typeof body === 'string') {
+      // Check if it's form-encoded data
+      if (body.includes('PhoneNumber=') || body.includes('Status=')) {
+        // Parse as form data
+        const params = querystring.parse(body);
+        deliveryData = [{
+          Status: parseInt(params.Status, 10),
+          StatusDescription: params.StatusDescription
+        }];
+      } else {
+        // Try to parse as JSON
+        let deliveryData;
+        try {
+          deliveryData = Array.isArray(body) ? body : JSON.parse(body);
+          if (!Array.isArray(deliveryData)) {
+            deliveryData = [deliveryData];
+          }
+        } catch (err) {
+          console.error('Failed to parse delivery notification:', err);
+          response.customHttpResponse = { statusCode: 400 };
+          return response;
+        }
       }
-    } catch (err) {
-      console.error('Failed to parse delivery notification:', err);
-      response.customHttpResponse = { statusCode: 400 };
-      return response;
+    } else if (Array.isArray(body)) {
+      deliveryData = body;
+    } else {
+      deliveryData = [body];
     }
 
     response.parsedDeliveryReports = deliveryData.map(item => ({
