@@ -33,12 +33,9 @@ function translateRequest(requestToParse, universalUrl) {
     response.parsedDeliveryReports = deliveryData.map(item => ({
       batchId,
       messageId,
-      rawStatusMeaning: item.Status,
-      deliveryStatus: translateInforuStatus(item.Status),
-      inforuId: item.InforuId,
-      phoneNumber: item.PhoneNumber,
-      customerMessageId: item.CustomerMessageId,
-      notificationDate: item.NotificationDate
+      rawStatusCode: item.Status,
+      rawStatusMeaning: item.StatusDescription,
+      deliveryStatus: translateInforuStatus(item.Status)
     }));
   } else {
     // This might be an incoming message callback
@@ -70,7 +67,7 @@ function translateInforuStatus(status) {
     case 4: return 'Read';
     case 6: return 'Clicked';
     case -2: return 'DeliveryFailed';
-    case -4: return 'Blocked';
+    case -4: return 'DeliveryFailed';
     default: return 'Unknown';
   }
 }

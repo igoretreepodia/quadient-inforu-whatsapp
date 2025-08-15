@@ -128,8 +128,15 @@ async function sendTemplateMessage(config, msg, callbackUrl) {
       TemplateId: templatePayload.templateId,
       TemplateParameters: templateParameters,
       Recipients: [recipient],
-      DeliveryNotificationUrl: `${callbackUrl}/${msg.batchId}/${msg.messageId}`,
-      CustomerMessageId: `${msg.batchId}_${msg.messageId}`
+      Settings: {
+        CustomerMessageID: `${msg.batchId}_${msg.messageId}`,
+        DeliveryNotificationUrl: `${callbackUrl}/${msg.batchId}/${msg.messageId}`,
+        CampaignName: config.defaultCampaignName || 'API_WHATSAPP',
+        Priority: 0,
+        MaxSegments: 0,
+        IgnoreUnsubscribeCheck: false,
+        AllowDuplicates: false
+      }
     }
   };
 
