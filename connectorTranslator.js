@@ -1,4 +1,4 @@
-import querystring from "querystring";
+const querystring = require('querystring');
 
 function translateRequest(requestToParse, universalUrl) {
   const { uri, body } = requestToParse;
